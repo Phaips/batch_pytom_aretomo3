@@ -22,7 +22,7 @@ This script automates batch submission of [pytom-match-pick](https://github.com/
   --voxel-size-angstrom 7.64 \  # required
   --dose 2 \                     # required, e-/Å² per tilt
   [--include Position_*] [--exclude Position_5] \  # optional wildcard filtering
-  [--angular-search 10 | --particle-diameter 140] \ # optional
+  [--angular-search 10] [--particle-diameter 140] \ # either or required
   -s 2 2 1 \                    # optional
   --per-tilt-weighting \       # optional
   --non-spherical-mask \       # optional
