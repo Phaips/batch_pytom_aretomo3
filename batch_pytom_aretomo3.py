@@ -231,6 +231,8 @@ def submit(script, dry):
 
 def main():
     args = parse_args()
+    args.aretomo_dir = os.path.abspath(args.aretomo_dir)
+    args.output_dir = os.path.abspath(args.output_dir)
     prefixes = find_prefixes(args.aretomo_dir, args.include, args.exclude)
     for p in prefixes:
         tilts = read_tlt_file(args.aretomo_dir, p)
