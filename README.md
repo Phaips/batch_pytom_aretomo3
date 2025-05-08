@@ -7,6 +7,8 @@ This script automates batch submission of [pytom-match-pick](https://github.com/
 - Computes **per-tilt exposure** by cumulatively summing `--dose` in acquisition order (`<prefix>_Imod/<prefix>_order_list.csv`)
 - Generates one SLURM submission script per tomogram
 
+and will run on all tomograms/<prefix>.mrc files by default unless specified `--include` or `--exclude`
+
 `--dry-run` will generate the bash scripts without submitting them, allowing for quick sanity checks or manual execution.
 
 ---
