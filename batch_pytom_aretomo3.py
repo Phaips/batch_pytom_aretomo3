@@ -195,7 +195,7 @@ def make_sbatch(prefix, tlt, df, exp, args):
         if args.angular_search:
             f.write(f"  --angular-search {args.angular_search} \\\n")
         if args.particle_diameter:
-            f.write(f"  --particle_diameter {args.particle_diameter} \\\n")
+            f.write(f"  --particle-diameter {args.particle_diameter} \\\n")
         if args.volume_split:
             x,y,z = args.volume_split
             f.write(f"  -s {x} {y} {z} \\\n")
