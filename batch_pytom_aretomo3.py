@@ -155,17 +155,17 @@ def read_tlt_file_from_aln(aretomo_dir, prefix):
                 tilts_aln.append(float(parts[9]))
     return tilts_aln
 
-
 def read_ctf_file(aretomo_dir, prefix):
     fn = os.path.join(aretomo_dir, f"{prefix}_CTF.txt")
     data = []
     with open(fn) as f:
         for L in f:
-            if L.startswith('#') or not L.strip(): continue
+            if L.startswith('#') or not L.strip():
+                continue
             parts = L.split()
             fr = int(parts[0])
-            avg = 0.5*(float(parts[1])+float(parts[2])) * 1e-4
-            data.append({'frame':fr, 'defocus_um':avg})
+            avg = 0.5*(float(parts[1]) + float(parts[2])) * 1e-4
+            data.append({'frame': fr, 'defocus_um': avg})
     return data
 
 def read_exclude(aretomo_dir: str, prefix: str) -> Set[int]:
@@ -179,16 +179,17 @@ def read_exclude(aretomo_dir: str, prefix: str) -> Set[int]:
                 return {int(x) for x in re.findall(r"\d+", line)}
     return set()
 
-
 def read_order_csv(aretomo_dir, prefix):
     fn = os.path.join(aretomo_dir, f"{prefix}_Imod", f"{prefix}_order_list.csv")
     order = []
     with open(fn) as f:
         hdr = f.readline()
-        if 'ImageNumber' not in hdr: f.seek(0)
+        if 'ImageNumber' not in hdr:
+            f.seek(0)
         for L in f:
-            if not L.strip(): continue
-            n,a = L.split(',')[:2]
+            if not L.strip():
+                continue
+            n, a = L.split(',')[:2]
             order.append((int(n), float(a)))
     return order
 
@@ -196,10 +197,10 @@ def read_order_csv(aretomo_dir, prefix):
 def calculate_cumulative_exposure(tilts, order, dose):
     expo = {}
     cum = 0.0
-    for num,tilt in order:
-        expo[round(tilt,2)] = cum
+    for num, tilt in order:
+        expo[round(tilt, 2)] = cum
         cum += dose
-    return [expo[round(t,2)] for t in tilts]
+    return [expo[round(t, 2)] for t in tilts]
 
 
 def write_aux_files(base_out, prefix, tilts, tilts_aln, ctf_filt, expos_filt):
@@ -208,14 +209,14 @@ def write_aux_files(base_out, prefix, tilts, tilts_aln, ctf_filt, expos_filt):
     tlt  = os.path.join(od, f"{prefix}.tlt")
     df   = os.path.join(od, f"{prefix}_defocus.txt")
     exp  = os.path.join(od, f"{prefix}_exposure.txt")
-    with open(tlt,'w') as f:
+    with open(tlt, 'w') as f:
         for t in tilts_aln: f.write(f"{t}\n")
-    with open(df,'w') as f:
+    with open(df, 'w') as f:
         for d in ctf_filt:
             f.write(f"{d['defocus_um']}\n")
-    with open(exp,'w') as f:
+    with open(exp, 'w') as f:
         for e in expos_filt: f.write(f"{e}\n")
-    return tlt,df,exp
+    return tlt, df, exp
 
 
 def make_sbatch(prefix, tlt, df, exp, args):
@@ -332,7 +333,7 @@ def main():
         expos_filt = [expo for i, expo in enumerate(expos, start=1) if i not in excl]
 
         tlt, df, exp = write_aux_files(args.output_dir, p, tilts, tilts_aln, ctf_filt, expos_filt)
-        sb_script   = make_sbatch(p, tlt, df, exp, args)
+        sb_script    = make_sbatch(p, tlt, df, exp, args)
         submit(sb_script, args.dry_run)
 
     print("Done.")
