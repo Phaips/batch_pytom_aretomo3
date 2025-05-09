@@ -210,12 +210,14 @@ def write_aux_files(base_out, prefix, tilts, tilts_aln, ctf_filt, expos_filt):
     df   = os.path.join(od, f"{prefix}_defocus.txt")
     exp  = os.path.join(od, f"{prefix}_exposure.txt")
     with open(tlt, 'w') as f:
-        for t in tilts_aln: f.write(f"{t}\n")
+        for t in tilts_aln:
+            f.write(f"{t}\n")
     with open(df, 'w') as f:
         for d in ctf_filt:
             f.write(f"{d['defocus_um']}\n")
     with open(exp, 'w') as f:
-        for e in expos_filt: f.write(f"{e}\n")
+        for e in expos_filt:
+            f.write(f"{e}\n")
     return tlt, df, exp
 
 
