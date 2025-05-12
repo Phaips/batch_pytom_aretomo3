@@ -13,7 +13,7 @@ and will run on all tomograms/`<prefix>.mrc` files by default unless specified `
 
 ---
 
-## Usage
+## Example Usage
 ```bash
 ./batch_pytom_aretomo3.py \
   -i /path/to/aretomo3/output \  # required
