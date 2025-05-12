@@ -3,6 +3,7 @@ import os
 import re
 import argparse
 import subprocess
+from typing import Set
 
 def parse_args():
     p = argparse.ArgumentParser(
@@ -138,6 +139,22 @@ def read_tlt_file(aretomo_dir, prefix):
         return [float(x) for x in f if x.strip()]
 
 
+def read_tlt_file_from_aln(aretomo_dir, prefix):
+    aln_fn = os.path.join(aretomo_dir, f"{prefix}.aln")
+    tilts_aln = []
+    with open(aln_fn) as fh:
+        for line in fh:
+            if line.startswith('#'):
+                # once we hit the Local Alignment section, we're done
+                if line.lstrip().startswith('# Local Alignment'):
+                    break
+                continue
+            parts = line.split()
+            # guard: ensure there's a 10th column
+            if len(parts) >= 10:
+                tilts_aln.append(float(parts[9]))
+    return tilts_aln
+
 def read_ctf_file(aretomo_dir, prefix):
     fn = os.path.join(aretomo_dir, f"{prefix}_CTF.txt")
     data = []
@@ -151,6 +168,16 @@ def read_ctf_file(aretomo_dir, prefix):
             data.append({'frame': fr, 'defocus_um': avg})
     return data
 
+def read_exclude(aretomo_dir: str, prefix: str) -> Set[int]:
+    """Return set of excluded frame numbers from `tilt.com`."""
+    path = os.path.join(aretomo_dir, f"{prefix}_Imod", "tilt.com")
+    if not os.path.isfile(path):
+        return set()
+    with open(path) as fh:
+        for line in fh:
+            if line.lstrip().startswith("EXCLUDELIST"):
+                return {int(x) for x in re.findall(r"\d+", line)}
+    return set()
 
 def read_order_csv(aretomo_dir, prefix):
     fn = os.path.join(aretomo_dir, f"{prefix}_Imod", f"{prefix}_order_list.csv")
@@ -176,22 +203,20 @@ def calculate_cumulative_exposure(tilts, order, dose):
     return [expo[round(t, 2)] for t in tilts]
 
 
-def write_aux_files(base_out, prefix, tilts, ctf, expos):
+def write_aux_files(base_out, prefix, tilts, tilts_aln, ctf_filt, expos_filt):
     od = os.path.join(base_out, prefix)
     os.makedirs(od, exist_ok=True)
     tlt  = os.path.join(od, f"{prefix}.tlt")
     df   = os.path.join(od, f"{prefix}_defocus.txt")
     exp  = os.path.join(od, f"{prefix}_exposure.txt")
     with open(tlt, 'w') as f:
-        for t in tilts:
+        for t in tilts_aln:
             f.write(f"{t}\n")
     with open(df, 'w') as f:
-        for i, t in enumerate(tilts):
-            fr = i + 1
-            val = next(d['defocus_um'] for d in ctf if d['frame'] == fr)
-            f.write(f"{val}\n")
+        for d in ctf_filt:
+            f.write(f"{d['defocus_um']}\n")
     with open(exp, 'w') as f:
-        for e in expos:
+        for e in expos_filt:
             f.write(f"{e}\n")
     return tlt, df, exp
 
@@ -300,12 +325,16 @@ def main():
 
     prefixes = find_prefixes(args.aretomo_dir, args.include, args.exclude)
     for p in prefixes:
+        excl  = read_exclude(args.aretomo_dir, p)
         tilts = read_tlt_file(args.aretomo_dir, p)
+        tilts_aln =read_tlt_file_from_aln(args.aretomo_dir, p)
         ctf   = read_ctf_file(args.aretomo_dir, p)
+        ctf_filt = [d for d in ctf if d['frame'] not in excl]
         order = read_order_csv(args.aretomo_dir, p)
         expos = calculate_cumulative_exposure(tilts, order, args.dose)
+        expos_filt = [expo for i, expo in enumerate(expos, start=1) if i not in excl]
 
-        tlt, df, exp = write_aux_files(args.output_dir, p, tilts, ctf, expos)
+        tlt, df, exp = write_aux_files(args.output_dir, p, tilts, tilts_aln, ctf_filt, expos_filt)
         sb_script    = make_sbatch(p, tlt, df, exp, args)
         submit(sb_script, args.dry_run)
 
