@@ -13,6 +13,8 @@ def parse_args():
                    help='AreTomo3 output directory')
     p.add_argument('-d', '--output-dir',     default='submission',
                    help='Top-level folder for per-tomogram subfolders')
+    p.add_argument('--bmask-dir',
+               help='Directory containing binary mask files (format has to be: <prefix>.mrc !!)')
     # required PyTom inputs
     p.add_argument('-t', '--template',       required=True,
                    help='Template MRC file')
@@ -79,16 +81,16 @@ def parse_args():
                    help='Spherical aberration mm (default: %(default)s)')
     p.add_argument('--voltage',             type=float, default=300,
                    help='Voltage kV (default: %(default)s)')
-    p.add_argument('--phase-shift',         type=float, default=0.0,
-                   help='Phase shift degrees (default: %(default)s)')
+    p.add_argument('--phase-shift',         type=float,
+                help='Phase shift degrees')
     p.add_argument('--defocus-handedness',  type=int, choices=[-1,0,1],
                    help='Defocus handedness (only if set)')
     p.add_argument('--spectral-whitening',  action='store_true',
                    help='Enable spectral whitening')
     p.add_argument('--relion5-tomograms-star',
                    help='RELION5 tomograms.star path (overrides tilts/CTF files)')
-    p.add_argument('--log', choices=['info','debug'], default='info',
-                   help='Logging level (default: %(default)s)')
+    p.add_argument('--log',                 choices=['info','debug'],
+                   help='Logging level')
 
     # SLURM defaults
     p.add_argument('--partition',           default='emgpu',
@@ -227,6 +229,13 @@ def make_sbatch(prefix, tlt, df, exp, args):
     script = os.path.join(od, f"submit_{prefix}.sh")
     tomo = os.path.join(args.aretomo_dir, f"{prefix}_Vol.mrc")
 
+    # Check for matching mask file if bmask-dir is provided
+    tomogram_mask = None
+    if args.bmask_dir:
+        potential_mask = os.path.join(args.bmask_dir, f"{prefix}.mrc")
+        if os.path.exists(potential_mask):
+            tomogram_mask = potential_mask
+
     with open(script, 'w') as f:
         f.write("#!/bin/bash -l\n")
         f.write("#SBATCH -o pytom.out%j\n")
@@ -298,14 +307,18 @@ def make_sbatch(prefix, tlt, df, exp, args):
             f.write("  --half-precision \\\n")
         if args.defocus_handedness is not None:
             f.write(f"  --defocus-handedness {args.defocus_handedness} \\\n")
-        # always include CTF imaging defaults
+        if tomogram_mask:
+            f.write(f"  --tomogram-mask {tomogram_mask} \\\n")
+        if args.phase_shift is not None:
+            f.write(f"  --phase-shift {args.phase_shift} \\\n")
+        if args.relion5_tomograms_star:
+            f.write(f"  --relion5-tomograms-star {args.relion5_tomograms_star} \\\n")
+        if args.log:
+            f.write(f"  --log {args.log} \\\n")
+        # always include imaging defaults
         f.write(f"  --amplitude-contrast {args.amplitude_contrast} \\\n")
         f.write(f"  --spherical-aberration {args.spherical_aberration} \\\n")
         f.write(f"  --voltage {args.voltage} \\\n")
-        f.write(f"  --phase-shift {args.phase_shift} \\\n")
-        if args.relion5_tomograms_star:
-            f.write(f"  --relion5-tomograms-star {args.relion5_tomograms_star} \\\n")
-        f.write(f"  --log {args.log} \\\n\n")
 
     os.chmod(script, 0o755)
     return script
