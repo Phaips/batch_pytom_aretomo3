@@ -41,7 +41,7 @@ and will run on all tomograms/`<prefix>.mrc` files by default unless specified `
 | Flag                          | Description                                      | Default     |
 |-------------------------------|--------------------------------------------------|-------------|
 | `-i, --aretomo-dir`           | AreTomo3 output directory                        | —           |
-| `-i, --bmask-dir`             | tomogram masks directory files as <prefix>.mrc ! | —           |
+| `--bmask-dir`                 | tomogram masks directory files as <prefix>.mrc ! | none        |
 | `-t, --template`              | Template MRC for matching                        | —           |
 | `-m, --mask`                  | Mask MRC for matching                            | —           |
 | `-g, --gpu-ids`               | GPU IDs (e.g. `0` or `0 1`)                      | —           |
