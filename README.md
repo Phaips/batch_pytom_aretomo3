@@ -7,7 +7,7 @@ This script automates batch submission of [pytom-match-pick](https://github.com/
 - Computes **per-tilt exposure** by cumulatively summing `--dose` in acquisition order (`<prefix>_Imod/<prefix>_order_list.csv`)
 - Generates one SLURM submission script per tomogram
 
-and will run on all tomograms/`<prefix>.mrc` files by default unless specified `--include` or `--exclude`
+and will run on all tomograms/`<prefix>.mrc` files by default unless specified `--include` or `--exclude`. Tomogram masks can be provided as directory `bmask-dir` and file names `<prefix>.mrc` will be matched accordingly.
 
 `--dry-run` will generate the bash scripts without submitting them, allowing for quick sanity checks or manual execution.
 
@@ -18,6 +18,7 @@ and will run on all tomograms/`<prefix>.mrc` files by default unless specified `
 ./batch_pytom_aretomo3.py \
   -i /path/to/aretomo3/output \  # required
   -d submission \                # default: submission
+  --bmask-dir \                  # tomogram masks directory. files must be named <prefix>.mrc !!
   -t /path/to/template.mrc \    # required
   -m /path/to/mask.mrc \        # required
   -g 0 \                         # required, GPU IDs
@@ -40,6 +41,7 @@ and will run on all tomograms/`<prefix>.mrc` files by default unless specified `
 | Flag                          | Description                                      | Default     |
 |-------------------------------|--------------------------------------------------|-------------|
 | `-i, --aretomo-dir`           | AreTomo3 output directory                        | —           |
+| `-i, --bmask-dir`             | tomogram masks directory files as <prefix>.mrc ! | —           |
 | `-t, --template`              | Template MRC for matching                        | —           |
 | `-m, --mask`                  | Mask MRC for matching                            | —           |
 | `-g, --gpu-ids`               | GPU IDs (e.g. `0` or `0 1`)                      | —           |
@@ -66,7 +68,7 @@ and will run on all tomograms/`<prefix>.mrc` files by default unless specified `
 | `--per-tilt-weighting`         | Enable per-tilt CTF weighting                    | off         |
 | `--low-pass LOW_PASS`          | Low-pass filter cutoff in Å                      | none        |
 | `--high-pass HIGH_PASS`        | High-pass filter cutoff in Å                     | none        |
-| `--phase-shift PHASE_SHIFT`    | Phase shift in degrees                           | `0.0`       |
+| `--phase-shift PHASE_SHIFT`    | Phase shift in degrees                           | none        |
 | `--defocus-handedness`         | Defocus gradient handedness (`-1,0,1`)           | none        |
 | `--spectral-whitening`         | Enable spectral whitening                        | off         |
 | `--relion5-tomograms-star`     | Path to RELION5 `tomograms.star` override        | none        |
@@ -138,6 +140,7 @@ pytom_match_template.py \
   -d submission/Position_1 \
   -m /path/to/mask.mrc \
   --angular-search 10 \
+  --tomogram-mask 1.mrc
   -s 2 2 1 \
   --voxel-size-angstrom 7.64 \
   -r \
