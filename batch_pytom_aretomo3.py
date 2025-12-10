@@ -24,7 +24,6 @@ def parse_args():
                    help='GPU IDs for pytom_match_template.py (e.g. -g 0)')
     p.add_argument('--voxel-size-angstrom',  type=float, required=True,
                    help='Voxel size in Å')
-    # dose & selection
     p.add_argument('--dose',                type=float, required=True,
                    help='Electron dose per tilt (e-/Å²)')
     p.add_argument('--include',             nargs='+',
@@ -113,6 +112,13 @@ def parse_args():
                    help='SLURM time')
     p.add_argument('--mail-type',           default='none',
                    help='SLURM mail-type')
+
+    # Node include/exclude
+    p.add_argument('--exclude-nodes', nargs='+',
+                   help='SLURM nodes to exclude (e.g. --exclude-nodes sgp02 sgp03)')
+    p.add_argument('--include-nodes', nargs='+',
+                   help='SLURM nodes to include via --nodelist (e.g. --include-nodes sgp02 sgp03)')
+
     return p.parse_args()
 
 
@@ -250,7 +256,12 @@ def make_sbatch(prefix, tlt, df, exp, args):
         f.write(f"#SBATCH --mail-type={args.mail_type}\n")
         f.write(f"#SBATCH --mem={args.mem}G\n")
         f.write(f"#SBATCH --qos={args.qos}\n")
-        f.write(f"#SBATCH --time={args.time}\n\n")
+        f.write(f"#SBATCH --time={args.time}\n")
+        if args.exclude_nodes:
+            f.write(f"#SBATCH --exclude={','.join(args.exclude_nodes)}\n")
+        if args.include_nodes:
+            f.write(f"#SBATCH --nodelist={','.join(args.include_nodes)}\n")
+        f.write("\n")
         f.write("ml purge\nml pytom-match-pick\n\n")
 
         # Start pytom command
@@ -340,7 +351,7 @@ def main():
     for p in prefixes:
         excl  = read_exclude(args.aretomo_dir, p)
         tilts = read_tlt_file(args.aretomo_dir, p)
-        tilts_aln =read_tlt_file_from_aln(args.aretomo_dir, p)
+        tilts_aln = read_tlt_file_from_aln(args.aretomo_dir, p)
         ctf   = read_ctf_file(args.aretomo_dir, p)
         ctf_filt = [d for d in ctf if d['frame'] not in excl]
         order = read_order_csv(args.aretomo_dir, p)
