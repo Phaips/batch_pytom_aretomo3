@@ -121,7 +121,7 @@ def parse_args():
                    help='SLURM mail-type')
 
     # Array controls
-    p.add_argument('--array-max-parallel', type=int, default=8,
+    p.add_argument('--max-parallel','--array-max-parallel', type=int, default=8,
                    help='If set, submit as --array=0-N%%M to cap concurrent tasks to M (recommended on busy partitions).')
 
     # Node include/exclude
@@ -169,6 +169,7 @@ def read_tlt_file_from_aln(aretomo_dir: str, prefix: str):
                     break
                 continue
             parts = line.split()
+            # guard: ensure there's a 10th column
             if len(parts) >= 10:
                 tilts_aln.append(float(parts[9]))
     return tilts_aln
@@ -249,6 +250,7 @@ def make_sbatch(prefix: str, tlt: str, df: str, exp: str, args):
     script = os.path.join(od, f"submit_{prefix}.sh")
     tomo = os.path.join(args.aretomo_dir, f"{prefix}_Vol.mrc")
 
+    # Check for matching mask file if bmask-dir is provided
     tomogram_mask = None
     if args.bmask_dir:
         potential_mask = os.path.join(args.bmask_dir, f"{prefix}.mrc")
@@ -277,7 +279,9 @@ def make_sbatch(prefix: str, tlt: str, df: str, exp: str, args):
         f.write("\n")
         f.write("ml purge\nml pytom-match-pick\n\n")
 
+        # Start pytom command
         f.write("pytom_match_template.py \\\n")
+        # required args
         for flag, val in [
             ("-v", tomo),
             ("-a", tlt),
@@ -289,11 +293,13 @@ def make_sbatch(prefix: str, tlt: str, df: str, exp: str, args):
         ]:
             f.write(f"  {flag} {val} \\\n")
 
+        # particle/angle
         if args.particle_diameter:
             f.write(f"  --particle-diameter {args.particle_diameter} \\\n")
         if args.angular_search:
             f.write(f"  --angular-search {args.angular_search} \\\n")
 
+        # additional optional flags
         if args.z_axis_rotational_symmetry:
             f.write(f"  --z-axis-rotational-symmetry {args.z_axis_rotational_symmetry} \\\n")
         if args.volume_split:
@@ -335,6 +341,7 @@ def make_sbatch(prefix: str, tlt: str, df: str, exp: str, args):
             f.write(f"  --relion5-tomograms-star {args.relion5_tomograms_star} \\\n")
         if args.log:
             f.write(f"  --log {args.log} \\\n")
+        # always include imaging defaults
         f.write(f"  --amplitude-contrast {args.amplitude_contrast} \\\n")
         f.write(f"  --spherical-aberration {args.spherical_aberration} \\\n")
         f.write(f"  --voltage {args.voltage} \\\n")
