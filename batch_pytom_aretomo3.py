@@ -367,8 +367,6 @@ def make_array_sbatch(prefixes: List[str], args):
         raise RuntimeError("No tomograms found after include/exclude filtering.")
 
     array_range = f"0-{n-1}"
-    if args.array_max_parallel is not None:
-        array_range = f"{array_range}%{args.array_max_parallel}"
 
     script = os.path.join(args.output_dir, "submit_array.sh")
 
