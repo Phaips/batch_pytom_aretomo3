@@ -121,7 +121,7 @@ def parse_args():
                    help='SLURM mail-type')
 
     # Array controls
-    p.add_argument('--max-parallel','--array-max-parallel', type=int, default=8,
+    p.add_argument('--array-max-parallel', type=int, default=8,
                    help='If set, submit as --array=0-N%%M to cap concurrent tasks to M (recommended on busy partitions).')
 
     # Node include/exclude
