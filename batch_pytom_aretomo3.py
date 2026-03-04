@@ -141,11 +141,14 @@ def find_prefixes(aretomo_dir: str, include: Optional[List[str]], exclude: Optio
                and '_ODD' not in f
                and '_CTF' not in f]
     prefixes = sorted(os.path.splitext(f)[0] for f in all_mrc)
+    
     if include:
+        include = include[0].split(',') if len(include) == 1 else include
         prefixes = [p for p in prefixes
                     if any(re.match(f'^{pat.replace("*", ".*")}$', p)
                            for pat in include)]
     if exclude:
+        exclude = exclude[0].split(',') if len(exclude) == 1 else exclude
         prefixes = [p for p in prefixes
                     if not any(re.match(f'^{pat.replace("*", ".*")}$', p)
                                for pat in exclude)]
@@ -154,9 +157,13 @@ def find_prefixes(aretomo_dir: str, include: Optional[List[str]], exclude: Optio
 
 def read_tlt_file(aretomo_dir: str, prefix: str):
     fn = os.path.join(aretomo_dir, f"{prefix}_Imod", f"{prefix}_st.tlt")
+    if not os.path.isfile(fn):
+        fn = os.path.join(aretomo_dir, f"{prefix}_Imod", f"{prefix}.tlt")
+        if not os.path.isfile(fn):
+            raise FileNotFoundError(f"No tilt file found for prefix {prefix} in {os.path.join(aretomo_dir, f'{prefix}_Imod')}")
     with open(fn) as f:
         return [float(x) for x in f if x.strip()]
-
+    
 
 def read_tlt_file_from_aln(aretomo_dir: str, prefix: str):
     aln_fn = os.path.join(aretomo_dir, f"{prefix}.aln")
@@ -186,6 +193,23 @@ def read_ctf_file(aretomo_dir: str, prefix: str):
             fr = int(parts[0])
             avg = 0.5 * (float(parts[1]) + float(parts[2])) * 1e-4
             data.append({'frame': fr, 'defocus_um': avg})
+    return data
+
+# Modified to read from IMOD CTF file:
+def read_ctf_file_imod(aretomo_dir: str, prefix: str):
+    fn = os.path.join(aretomo_dir, f"{prefix}_Imod", f"{prefix}_st_ctf.txt")
+    if not os.path.isfile(fn):
+        fn = os.path.join(aretomo_dir, f"{prefix}_Imod", f"{prefix}_ctf.txt")
+        if not os.path.isfile(fn):
+            raise FileNotFoundError(f"No CTF file found for prefix {prefix} in {os.path.join(aretomo_dir, f'{prefix}_Imod')}")
+    data = []
+    with open(fn) as f:
+        for L in f:
+            parts = L.split()
+            if len(parts) == 7:
+                fr = int(parts[0])
+                avg = 0.5 * (float(parts[4]) + float(parts[5])) * 1e-3
+                data.append({'frame': fr, 'defocus_um': avg})
     return data
 
 
@@ -222,7 +246,8 @@ def calculate_cumulative_exposure(tilts, order, dose: float):
     for num, tilt in order:
         expo[round(tilt, 2)] = cum
         cum += dose
-    return [expo[round(t, 2)] for t in tilts]
+    # return [expo[round(t, 2)] for t in tilts]
+    return [expo[t] for t in expo.keys()]
 
 
 def write_aux_files(base_out: str, prefix: str, tilts, tilts_aln, ctf_filt, expos_filt):
@@ -513,7 +538,8 @@ def main():
         excl = read_exclude(args.aretomo_dir, pfx)
         tilts = read_tlt_file(args.aretomo_dir, pfx)
         tilts_aln = read_tlt_file_from_aln(args.aretomo_dir, pfx)
-        ctf = read_ctf_file(args.aretomo_dir, pfx)
+        # ctf = read_ctf_file(args.aretomo_dir, pfx)
+        ctf = read_ctf_file_imod(args.aretomo_dir, pfx) # For consistency with local alignments, we now read everything from the IMOD folder
         ctf_filt = [d for d in ctf if d['frame'] not in excl]
         order = read_order_csv(args.aretomo_dir, pfx)
         expos = calculate_cumulative_exposure(tilts, order, args.dose)
