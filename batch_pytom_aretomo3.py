@@ -121,7 +121,7 @@ def parse_args():
                    help='SLURM mail-type')
 
     # Array controls
-    p.add_argument('--array-max-parallel','--max-parallel', type=int, default=8,
+    p.add_argument('--array-max-parallel', '--max-parallel', type=int, default=8,
                    help='If set, submit as --array=0-N%%M to cap concurrent tasks to M (recommended on busy partitions).')
 
     # Node include/exclude
@@ -141,7 +141,7 @@ def find_prefixes(aretomo_dir: str, include: Optional[List[str]], exclude: Optio
                and '_ODD' not in f
                and '_CTF' not in f]
     prefixes = sorted(os.path.splitext(f)[0] for f in all_mrc)
-    
+
     if include:
         include = include[0].split(',') if len(include) == 1 else include
         prefixes = [p for p in prefixes
@@ -163,23 +163,42 @@ def read_tlt_file(aretomo_dir: str, prefix: str):
             raise FileNotFoundError(f"No tilt file found for prefix {prefix} in {os.path.join(aretomo_dir, f'{prefix}_Imod')}")
     with open(fn) as f:
         return [float(x) for x in f if x.strip()]
-    
+
 
 def read_tlt_file_from_aln(aretomo_dir: str, prefix: str):
     aln_fn = os.path.join(aretomo_dir, f"{prefix}.aln")
     tilts_aln = []
+    if not os.path.isfile(aln_fn):
+        return tilts_aln
     with open(aln_fn) as fh:
         for line in fh:
             if line.startswith('#'):
-                # once we hit the Local Alignment section, we're done
                 if line.lstrip().startswith('# Local Alignment'):
                     break
                 continue
             parts = line.split()
-            # guard: ensure there's a 10th column
             if len(parts) >= 10:
                 tilts_aln.append(float(parts[9]))
     return tilts_aln
+
+
+def read_darkframes_from_aln(aretomo_dir: str, prefix: str) -> Set[int]:
+    # Read AreTomo DarkFrame exclusions from the global alignment header.
+    aln_fn = os.path.join(aretomo_dir, f"{prefix}.aln")
+    excl = set()
+    if not os.path.isfile(aln_fn):
+        return excl
+
+    with open(aln_fn) as fh:
+        for line in fh:
+            s = line.lstrip()
+            if s.startswith('# Local Alignment'):
+                break
+            if s.startswith('# DarkFrame'):
+                m = re.search(r'DarkFrame\s*=\s*(\d+)\s+(\d+)\s+([-\d.]+)', s)
+                if m:
+                    excl.add(int(m.group(2)))
+    return excl
 
 
 def read_ctf_file(aretomo_dir: str, prefix: str):
@@ -195,13 +214,8 @@ def read_ctf_file(aretomo_dir: str, prefix: str):
             data.append({'frame': fr, 'defocus_um': avg})
     return data
 
-# Modified to read from IMOD CTF file:
-def read_ctf_file_imod(aretomo_dir: str, prefix: str):
-    fn = os.path.join(aretomo_dir, f"{prefix}_Imod", f"{prefix}_st_ctf.txt")
-    if not os.path.isfile(fn):
-        fn = os.path.join(aretomo_dir, f"{prefix}_Imod", f"{prefix}_ctf.txt")
-        if not os.path.isfile(fn):
-            raise FileNotFoundError(f"No CTF file found for prefix {prefix} in {os.path.join(aretomo_dir, f'{prefix}_Imod')}")
+
+def read_ctf_file_imod_from_path(fn: str):
     data = []
     with open(fn) as f:
         for L in f:
@@ -213,8 +227,28 @@ def read_ctf_file_imod(aretomo_dir: str, prefix: str):
     return data
 
 
+def read_ctf_file_any(aretomo_dir: str, prefix: str):
+    # Prefer standard AreTomo top-level CTF outputs, then fall back to _Imod variants.
+    top_ctf = os.path.join(aretomo_dir, f"{prefix}_CTF.txt")
+    if os.path.isfile(top_ctf):
+        return read_ctf_file(aretomo_dir, prefix)
+
+    top_ctf_imod = os.path.join(aretomo_dir, f"{prefix}_CTF_Imod.txt")
+    if os.path.isfile(top_ctf_imod):
+        return read_ctf_file_imod_from_path(top_ctf_imod)
+
+    imod_candidates = [
+        os.path.join(aretomo_dir, f"{prefix}_Imod", f"{prefix}_st_ctf.txt"),
+        os.path.join(aretomo_dir, f"{prefix}_Imod", f"{prefix}_ctf.txt"),
+    ]
+    for fn in imod_candidates:
+        if os.path.isfile(fn):
+            return read_ctf_file_imod_from_path(fn)
+
+    return None
+
+
 def read_exclude(aretomo_dir: str, prefix: str) -> Set[int]:
-    """Return set of excluded frame numbers from `tilt.com`."""
     path = os.path.join(aretomo_dir, f"{prefix}_Imod", "tilt.com")
     if not os.path.isfile(path):
         return set()
@@ -240,42 +274,49 @@ def read_order_csv(aretomo_dir: str, prefix: str):
     return order
 
 
-def calculate_cumulative_exposure(tilts, order, dose: float):
-    expo = {}
+def calculate_cumulative_exposure_by_frame(order, dose: float):
+    # Build cumulative dose indexed by 1-based frame number.
+    expo_by_frame = {}
     cum = 0.0
-    for num, tilt in order:
-        expo[round(tilt, 2)] = cum
+    for frame_num, _tilt in order:
+        expo_by_frame[frame_num] = cum
         cum += dose
-    # return [expo[round(t, 2)] for t in tilts]
-    return [expo[t] for t in expo.keys()]
+    return expo_by_frame
 
 
-def write_aux_files(base_out: str, prefix: str, tilts, tilts_aln, ctf_filt, expos_filt):
+def write_aux_files(base_out: str, prefix: str, tlt_values, defocus_values, exposure_values):
     od = os.path.join(base_out, prefix)
     os.makedirs(od, exist_ok=True)
     tlt = os.path.join(od, f"{prefix}.tlt")
     df = os.path.join(od, f"{prefix}_defocus.txt")
     exp = os.path.join(od, f"{prefix}_exposure.txt")
+
     with open(tlt, 'w') as f:
-        for t in tilts_aln:
+        for t in tlt_values:
             f.write(f"{t}\n")
-    with open(df, 'w') as f:
-        for d in ctf_filt:
-            f.write(f"{d['defocus_um']}\n")
+
+    if defocus_values is not None:
+        with open(df, 'w') as f:
+            for d in defocus_values:
+                f.write(f"{d}\n")
+    else:
+        if os.path.exists(df):
+            os.remove(df)
+        df = None
+
     with open(exp, 'w') as f:
-        for e in expos_filt:
+        for e in exposure_values:
             f.write(f"{e}\n")
+
     return tlt, df, exp
 
 
-def make_sbatch(prefix: str, tlt: str, df: str, exp: str, args):
-    """Legacy: one sbatch script per tomogram."""
+def make_sbatch(prefix: str, tlt: str, df: Optional[str], exp: str, args):
     od = os.path.join(args.output_dir, prefix)
     os.makedirs(od, exist_ok=True)
     script = os.path.join(od, f"submit_{prefix}.sh")
     tomo = os.path.join(args.aretomo_dir, f"{prefix}_Vol.mrc")
 
-    # Check for matching mask file if bmask-dir is provided
     tomogram_mask = None
     if args.bmask_dir:
         potential_mask = os.path.join(args.bmask_dir, f"{prefix}.mrc")
@@ -304,27 +345,27 @@ def make_sbatch(prefix: str, tlt: str, df: str, exp: str, args):
         f.write("\n")
         f.write("ml purge\nml pytom-match-pick\n\n")
 
-        # Start pytom command
         f.write("pytom_match_template.py \\\n")
-        # required args
-        for flag, val in [
+
+        required_args = [
             ("-v", tomo),
             ("-a", tlt),
             ("--dose-accumulation", exp),
-            ("--defocus", df),
             ("-t", args.template),
             ("-d", od),
             ("-m", args.mask),
-        ]:
+        ]
+        if df is not None:
+            required_args.insert(3, ("--defocus", df))
+
+        for flag, val in required_args:
             f.write(f"  {flag} {val} \\\n")
 
-        # particle/angle
         if args.particle_diameter:
             f.write(f"  --particle-diameter {args.particle_diameter} \\\n")
         if args.angular_search:
             f.write(f"  --angular-search {args.angular_search} \\\n")
 
-        # additional optional flags
         if args.z_axis_rotational_symmetry:
             f.write(f"  --z-axis-rotational-symmetry {args.z_axis_rotational_symmetry} \\\n")
         if args.volume_split:
@@ -348,7 +389,7 @@ def make_sbatch(prefix: str, tlt: str, df: str, exp: str, args):
         f.write(f"  -g {' '.join(args.gpu_ids)} \\\n")
         if args.per_tilt_weighting:
             f.write("  --per-tilt-weighting \\\n")
-        if args.tomogram_ctf_model:
+        if args.tomogram_ctf_model and df is not None:
             f.write(f"  --tomogram-ctf-model {args.tomogram_ctf_model} \\\n")
         if args.non_spherical_mask:
             f.write("  --non-spherical-mask \\\n")
@@ -366,20 +407,15 @@ def make_sbatch(prefix: str, tlt: str, df: str, exp: str, args):
             f.write(f"  --relion5-tomograms-star {args.relion5_tomograms_star} \\\n")
         if args.log:
             f.write(f"  --log {args.log} \\\n")
-        # always include imaging defaults
         f.write(f"  --amplitude-contrast {args.amplitude_contrast} \\\n")
         f.write(f"  --spherical-aberration {args.spherical_aberration} \\\n")
-        f.write(f"  --voltage {args.voltage} \\\n")
+        f.write(f"  --voltage {args.voltage} \n")
 
     os.chmod(script, 0o755)
     return script
 
 
 def make_array_sbatch(prefixes: List[str], args):
-    """
-    Create a single SLURM array job script plus a prefixes list.
-    Each array task reads one prefix, then runs pytom_match_template.py on that tomogram.
-    """
     os.makedirs(args.output_dir, exist_ok=True)
 
     prefix_list = os.path.join(args.output_dir, "prefixes.txt")
@@ -397,61 +433,54 @@ def make_array_sbatch(prefixes: List[str], args):
 
     script = os.path.join(args.output_dir, "submit_array.sh")
 
-    # Pre-render optional args that are constant across tasks
     opt_lines = []
 
-    # particle/angle (mutually exclusive, but argparse already enforces)
     if args.particle_diameter is not None:
-        opt_lines.append(f"  --particle-diameter {args.particle_diameter} \\")
+        opt_lines.append(f'CMD+=(--particle-diameter {args.particle_diameter})')
     if args.angular_search is not None:
-        opt_lines.append(f"  --angular-search {args.angular_search} \\")
+        opt_lines.append(f'CMD+=(--angular-search {args.angular_search})')
 
     if args.z_axis_rotational_symmetry is not None:
-        opt_lines.append(f"  --z-axis-rotational-symmetry {args.z_axis_rotational_symmetry} \\")
+        opt_lines.append(f'CMD+=(--z-axis-rotational-symmetry {args.z_axis_rotational_symmetry})')
     if args.volume_split:
         x, y, z = args.volume_split
-        opt_lines.append(f"  -s {x} {y} {z} \\")
+        opt_lines.append(f'CMD+=(-s {x} {y} {z})')
     if args.search_x:
-        opt_lines.append(f"  --search-x {args.search_x[0]} {args.search_x[1]} \\")
+        opt_lines.append(f'CMD+=(--search-x {args.search_x[0]} {args.search_x[1]})')
     if args.search_y:
-        opt_lines.append(f"  --search-y {args.search_y[0]} {args.search_y[1]} \\")
+        opt_lines.append(f'CMD+=(--search-y {args.search_y[0]} {args.search_y[1]})')
     if args.search_z:
-        opt_lines.append(f"  --search-z {args.search_z[0]} {args.search_z[1]} \\")
+        opt_lines.append(f'CMD+=(--search-z {args.search_z[0]} {args.search_z[1]})')
     if args.voxel_size_angstrom is not None:
-        opt_lines.append(f"  --voxel-size-angstrom {args.voxel_size_angstrom} \\")
+        opt_lines.append(f'CMD+=(--voxel-size-angstrom {args.voxel_size_angstrom})')
     if args.low_pass is not None:
-        opt_lines.append(f"  --low-pass {args.low_pass} \\")
+        opt_lines.append(f'CMD+=(--low-pass {args.low_pass})')
     if args.high_pass is not None:
-        opt_lines.append(f"  --high-pass {args.high_pass} \\")
+        opt_lines.append(f'CMD+=(--high-pass {args.high_pass})')
     if args.random_phase_correction:
-        opt_lines.append("  -r \\")
-        opt_lines.append(f"  --rng-seed {args.rng_seed} \\")
-    opt_lines.append(f"  -g {' '.join(args.gpu_ids)} \\")
+        opt_lines.append('CMD+=(-r)')
+        opt_lines.append(f'CMD+=(--rng-seed {args.rng_seed})')
+    opt_lines.append(f"CMD+=(-g {' '.join(args.gpu_ids)})")
     if args.per_tilt_weighting:
-        opt_lines.append("  --per-tilt-weighting \\")
-    if args.tomogram_ctf_model is not None:
-        opt_lines.append(f"  --tomogram-ctf-model {args.tomogram_ctf_model} \\")
+        opt_lines.append('CMD+=(--per-tilt-weighting)')
     if args.non_spherical_mask:
-        opt_lines.append("  --non-spherical-mask \\")
+        opt_lines.append('CMD+=(--non-spherical-mask)')
     if args.spectral_whitening:
-        opt_lines.append("  --spectral-whitening \\")
+        opt_lines.append('CMD+=(--spectral-whitening)')
     if args.half_precision:
-        opt_lines.append("  --half-precision \\")
+        opt_lines.append('CMD+=(--half-precision)')
     if args.defocus_handedness is not None:
-        opt_lines.append(f"  --defocus-handedness {args.defocus_handedness} \\")
+        opt_lines.append(f'CMD+=(--defocus-handedness {args.defocus_handedness})')
     if args.phase_shift is not None:
-        opt_lines.append(f"  --phase-shift {args.phase_shift} \\")
+        opt_lines.append(f'CMD+=(--phase-shift {args.phase_shift})')
     if args.relion5_tomograms_star is not None:
-        opt_lines.append(f"  --relion5-tomograms-star {args.relion5_tomograms_star} \\")
+        opt_lines.append(f'CMD+=(--relion5-tomograms-star {args.relion5_tomograms_star})')
     if args.log is not None:
-        opt_lines.append(f"  --log {args.log} \\")
-    # imaging defaults
-    opt_lines.append(f"  --amplitude-contrast {args.amplitude_contrast} \\")
-    opt_lines.append(f"  --spherical-aberration {args.spherical_aberration} \\")
-    opt_lines.append(f"  --voltage {args.voltage} \\")
+        opt_lines.append(f'CMD+=(--log {args.log})')
+    opt_lines.append(f'CMD+=(--amplitude-contrast {args.amplitude_contrast})')
+    opt_lines.append(f'CMD+=(--spherical-aberration {args.spherical_aberration})')
+    opt_lines.append(f'CMD+=(--voltage {args.voltage})')
 
-    # bmask dir: handled per task in bash (if exists, pass --tomogram-mask)
-    bmask_dir_line = ""
     if args.bmask_dir:
         bmask_dir_line = f'BMASK_DIR="{os.path.abspath(args.bmask_dir)}"'
     else:
@@ -479,7 +508,6 @@ def make_array_sbatch(prefixes: List[str], args):
         if args.include_nodes:
             f.write(f"#SBATCH --nodelist={','.join(args.include_nodes)}\n")
         f.write("\n")
-        f.write("#set -euo pipefail\n\n")
         f.write("ml purge\nml pytom-match-pick\n\n")
 
         f.write(f'PREFIX_LIST="{prefix_list}"\n')
@@ -499,22 +527,28 @@ def make_array_sbatch(prefixes: List[str], args):
         f.write('DF="${OD}/${PREFIX}_defocus.txt"\n')
         f.write('EXP="${OD}/${PREFIX}_exposure.txt"\n\n')
 
-        f.write('TOMO_MASK_ARGS=""\n')
-        f.write('if [[ -n "${BMASK_DIR}" && -f "${BMASK_DIR}/${PREFIX}.mrc" ]]; then\n')
-        f.write('  TOMO_MASK_ARGS="--tomogram-mask ${BMASK_DIR}/${PREFIX}.mrc"\n')
+        f.write('# Build command dynamically so CTF-dependent arguments are only passed when present.\n')
+        f.write('CMD=(pytom_match_template.py)\n')
+        f.write('CMD+=(-v "${TOMO}")\n')
+        f.write('CMD+=(-a "${TLT}")\n')
+        f.write('CMD+=(--dose-accumulation "${EXP}")\n')
+        f.write('CMD+=(-t "${TEMPLATE}")\n')
+        f.write('CMD+=(-d "${OD}")\n')
+        f.write('CMD+=(-m "${PMASK}")\n\n')
+
+        f.write('if [[ -s "${DF}" ]]; then\n')
+        f.write('  CMD+=(--defocus "${DF}")\n')
+        if args.tomogram_ctf_model is not None:
+            f.write(f'  CMD+=(--tomogram-ctf-model {args.tomogram_ctf_model})\n')
         f.write('fi\n\n')
 
-        f.write("pytom_match_template.py \\\n")
-        f.write('  -v "${TOMO}" \\\n')
-        f.write('  -a "${TLT}" \\\n')
-        f.write('  --dose-accumulation "${EXP}" \\\n')
-        f.write('  --defocus "${DF}" \\\n')
-        f.write('  -t "${TEMPLATE}" \\\n')
-        f.write('  -d "${OD}" \\\n')
-        f.write('  -m "${PMASK}" \\\n')
+        f.write('if [[ -n "${BMASK_DIR}" && -f "${BMASK_DIR}/${PREFIX}.mrc" ]]; then\n')
+        f.write('  CMD+=(--tomogram-mask "${BMASK_DIR}/${PREFIX}.mrc")\n')
+        f.write('fi\n\n')
+
         for line in opt_lines:
             f.write(line + "\n")
-        f.write('  ${TOMO_MASK_ARGS}\n')
+        f.write('\n"${CMD[@]}"\n')
 
     os.chmod(script, 0o755)
     return script, prefix_list
@@ -533,18 +567,53 @@ def main():
     args.output_dir = os.path.abspath(args.output_dir)
     prefixes = find_prefixes(args.aretomo_dir, args.include, args.exclude)
 
-    # Always generate aux files per tomogram (tlt/defocus/exposure) into output_dir/prefix/
     for pfx in prefixes:
-        excl = read_exclude(args.aretomo_dir, pfx)
-        tilts = read_tlt_file(args.aretomo_dir, pfx)
+        raw_tilts = read_tlt_file(args.aretomo_dir, pfx)
         tilts_aln = read_tlt_file_from_aln(args.aretomo_dir, pfx)
-        # ctf = read_ctf_file(args.aretomo_dir, pfx)
-        ctf = read_ctf_file_imod(args.aretomo_dir, pfx) # For consistency with local alignments, we now read everything from the IMOD folder
-        ctf_filt = [d for d in ctf if d['frame'] not in excl]
+
+        # Combine IMOD EXCLUDELIST and AreTomo DarkFrame exclusions on the same 1-based frame index.
+        excl_imod = read_exclude(args.aretomo_dir, pfx)
+        excl_dark = read_darkframes_from_aln(args.aretomo_dir, pfx)
+        excl_all = excl_imod | excl_dark
+
+        kept_frames = [i for i in range(1, len(raw_tilts) + 1) if i not in excl_all]
+
+        # Prefer the aligned .aln tilt list when available because it matches the reconstructed volume state.
+        if tilts_aln:
+            tlt_out = tilts_aln
+            if len(tlt_out) != len(kept_frames):
+                raise RuntimeError(
+                    f"{pfx}: .aln tilt count ({len(tlt_out)}) does not match kept frame count ({len(kept_frames)})."
+                )
+        else:
+            tlt_out = [raw_tilts[i - 1] for i in kept_frames]
+
+        ctf = read_ctf_file_any(args.aretomo_dir, pfx)
+        if ctf is None:
+            if args.tomogram_ctf_model:
+                raise FileNotFoundError(
+                    f"{pfx}: no CTF file found, but --tomogram-ctf-model was requested."
+                )
+            defocus_out = None
+        else:
+            ctf_by_frame = {d['frame']: d['defocus_um'] for d in ctf}
+            missing_ctf = [i for i in kept_frames if i not in ctf_by_frame]
+            if missing_ctf:
+                raise RuntimeError(
+                    f"{pfx}: missing CTF values for kept frames: {missing_ctf}"
+                )
+            defocus_out = [ctf_by_frame[i] for i in kept_frames]
+
         order = read_order_csv(args.aretomo_dir, pfx)
-        expos = calculate_cumulative_exposure(tilts, order, args.dose)
-        expos_filt = [expo for i, expo in enumerate(expos, start=1) if i not in excl]
-        write_aux_files(args.output_dir, pfx, tilts, tilts_aln, ctf_filt, expos_filt)
+        expo_by_frame = calculate_cumulative_exposure_by_frame(order, args.dose)
+        missing_expo = [i for i in kept_frames if i not in expo_by_frame]
+        if missing_expo:
+            raise RuntimeError(
+                f"{pfx}: missing exposure values for kept frames: {missing_expo}"
+            )
+        exposure_out = [expo_by_frame[i] for i in kept_frames]
+
+        write_aux_files(args.output_dir, pfx, tlt_out, defocus_out, exposure_out)
 
     if args.mode == 'per-tomo':
         for pfx in prefixes:
@@ -552,6 +621,8 @@ def main():
             tlt = os.path.join(od, f"{pfx}.tlt")
             df = os.path.join(od, f"{pfx}_defocus.txt")
             exp = os.path.join(od, f"{pfx}_exposure.txt")
+            if not os.path.isfile(df) or os.path.getsize(df) == 0:
+                df = None
             sb_script = make_sbatch(pfx, tlt, df, exp, args)
             submit(sb_script, args.dry_run)
     else:
