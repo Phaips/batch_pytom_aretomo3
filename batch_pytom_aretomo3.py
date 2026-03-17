@@ -274,14 +274,21 @@ def read_order_csv(aretomo_dir: str, prefix: str):
     return order
 
 
-def calculate_cumulative_exposure_by_frame(order, dose: float):
-    # Build cumulative dose indexed by 1-based frame number.
-    expo_by_frame = {}
+def calculate_cumulative_exposure_by_tilt(tilts_for_output, order, dose: float):
+    # Assign cumulative dose in acquisition order, then write it back in final tilt-list order.
+    expo_by_tilt = {}
     cum = 0.0
-    for frame_num, _tilt in order:
-        expo_by_frame[frame_num] = cum
+    for _frame_num, tilt in order:
+        expo_by_tilt[round(float(tilt), 2)] = cum
         cum += dose
-    return expo_by_frame
+
+    missing_expo = [t for t in tilts_for_output if round(float(t), 2) not in expo_by_tilt]
+    if missing_expo:
+        raise RuntimeError(
+            f"Missing exposure values for output tilts: {missing_expo}"
+        )
+
+    return [expo_by_tilt[round(float(t), 2)] for t in tilts_for_output]
 
 
 def write_aux_files(base_out: str, prefix: str, tlt_values, defocus_values, exposure_values):
@@ -605,13 +612,7 @@ def main():
             defocus_out = [ctf_by_frame[i] for i in kept_frames]
 
         order = read_order_csv(args.aretomo_dir, pfx)
-        expo_by_frame = calculate_cumulative_exposure_by_frame(order, args.dose)
-        missing_expo = [i for i in kept_frames if i not in expo_by_frame]
-        if missing_expo:
-            raise RuntimeError(
-                f"{pfx}: missing exposure values for kept frames: {missing_expo}"
-            )
-        exposure_out = [expo_by_frame[i] for i in kept_frames]
+        exposure_out = calculate_cumulative_exposure_by_tilt(tlt_out, order, args.dose)
 
         write_aux_files(args.output_dir, pfx, tlt_out, defocus_out, exposure_out)
 
