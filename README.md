@@ -42,7 +42,7 @@ python batch_pytom_aretomo3.py \
 
 Remove `--dry-run` to submit. For **one separate SLURM job per tomogram**, use `--mode per-tomo` instead. `--mode` controls *template-matching submission*, not the choice of workflow.
 
-You can use `--angular-search 10` instead of `--particle-diameter 140` for matching, but not both. Optional parameters include `-s 2 2 1`, `--per-tilt-weighting`, `--non-spherical-mask`, `--tomogram-ctf-model phase-flip`, `-r`, and `--rng-seed 69`.
+You can use `--angular-search 10` instead of `--particle-diameter 140` for matching, but not both. Optional parameters include `-s 2 2 1`, `--per-tilt-weighting`, `--non-spherical-mask`, `--tomogram-ctf-model phase-flip`, `-r`, and `--rng-seed 69`. **Those are highly recommended!**
 
 ### Template-matching output
 
