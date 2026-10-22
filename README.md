@@ -1,156 +1,211 @@
-# Batch Submission of `pytom-match-pick` from AreTomo3 Output
+# Batch PyTOM template matching and candidate extraction from AreTomo3 outputs
 
-This script automates batch submission of [pytom-match-pick](https://github.com/SBC-Utrecht/pytom-match-pick) jobs on an HPC cluster (SLURM) by reading metadata directly from **AreTomo3** outputs. It:
+`batch_pytom_aretomo3.py` submits [pytom-match-pick](https://github.com/SBC-Utrecht/pytom-match-pick) jobs to a SLURM cluster. It supports **two workflows**:
 
-- Extracts **tilt angles** from `IMOD/<prefix>_st.tlt`
-- Reads **defocus** (average of defocus1/defocus2 in Å, converted to μm) from `<prefix>_CTF.txt`
-- Computes **per-tilt exposure** by cumulatively summing `--dose` in acquisition order (`<prefix>_Imod/<prefix>_order_list.csv`)
-- Generates one SLURM submission script per tomogram
+1. **Template matching** (`--workflow match`, default): prepare per-tomogram tilt, exposure, and defocus metadata from AreTomo3 outputs and submit `pytom_match_template.py`.
+2. **Particle candidate extraction** (`--workflow extract`): find completed matching `*_job.json` files and submit a SLURM array running `pytom_extract_candidates.py`, **one JSON and one GPU per array task**.
 
-and will run on all tomograms/`<prefix>.mrc` files by default unless specified `--include` or `--exclude`
+Use `--dry-run` to generate submission scripts without calling `sbatch`.
 
-`--dry-run` will generate the bash scripts without submitting them, allowing for quick sanity checks or manual execution.
+## 1. Template matching
 
----
+### What the wrapper reads
 
-## Usage
-```bash
-./batch_pytom_aretomo3.py \
-  -i /path/to/aretomo3/output \  # required
-  -d submission \                # default: submission
-  -t /path/to/template.mrc \    # required
-  -m /path/to/mask.mrc \        # required
-  -g 0 \                         # required, GPU IDs
-  --voxel-size-angstrom 7.64 \  # required
-  --dose 2 \                     # required, e-/Å² per tilt
-  [--include Position_*] [--exclude Position_5] \  # optional wildcard filtering
-  [--angular-search 10] [--particle-diameter 140] \ # either or required
-  -s 2 2 1 \                    # optional
-  --per-tilt-weighting \       # optional
-  --non-spherical-mask \       # optional
-  --tomogram-ctf-model phase-flip \ # optional
-  -r \                          # optional
-  --rng-seed 69 \               # default: 69
-  [--dry-run]                    # optional
-```
+For each selected `<prefix>.mrc` in `--aretomo-dir`, the wrapper:
 
-## Flag Summary
+- Uses `<prefix>_Imod/<prefix>_st.tlt` (or `<prefix>.tlt` in the same directory) for the raw tilt list.
+- Prefers aligned tilt angles from `<prefix>.aln` when available (the TILT value in column 10 of the global alignment records).
+- Excludes frames listed in IMOD `tilt.com` `EXCLUDELIST` and AreTomo3 `.aln` `DarkFrame` records.
+- Reads defocus from `<prefix>_CTF.txt` when present, falling back to supported IMOD CTF text files; averages the two defocus columns and converts Å to µm. Defocus is optional unless `--tomogram-ctf-model` is requested.
+- Computes cumulative electron exposure in acquisition order from `<prefix>_Imod/<prefix>_order_list.csv` and `--dose` (e⁻/Å² per tilt).
+- Optionally adds a tomogram boundary mask from `--bmask-dir/<prefix>.mrc`.
 
-### Core flags
-| Flag                          | Description                                      | Default     |
-|-------------------------------|--------------------------------------------------|-------------|
-| `-i, --aretomo-dir`           | AreTomo3 output directory                        | —           |
-| `-t, --template`              | Template MRC for matching                        | —           |
-| `-m, --mask`                  | Mask MRC for matching                            | —           |
-| `-g, --gpu-ids`               | GPU IDs (e.g. `0` or `0 1`)                      | —           |
-| `--voxel-size-angstrom`       | Voxel size in Å                                  | —           |
-| `--dose`                      | Electron dose per tilt (e‑/Å²)                   | —           |
-| `-d, --output-dir`            | Top-level folder for outputs                     | `submission`|
-| `--include` / `--exclude`     | Wildcard patterns for prefix filtering           | all / none  |
-| `--particle-diameter`          | Particle diameter in Å (Crowther sampling)      | none        |
-| `--angular-search`             | Override angular search (float max or `.txt`)   | none        |
-| `--dry-run`                   | Generate scripts without submitting              | off         |
+By default, all eligible tomograms are processed. Use `--include` and `--exclude` for wildcard prefix filtering.
 
-### Input Options
-| Flag                           | Description                                      | Default     |
-|--------------------------------|--------------------------------------------------|-------------|
-| `-s, --volume-split`           | Split volume into X Y Z blocks                   | none        |
-| `--search-x START END`         | Search range along x-axis                        | none        |
-| `--search-y START END`         | Search range along y-axis                        | none        |
-| `--search-z START END`         | Search range along z-axis                        | none        |
-| `--non-spherical-mask`         | Enable non-spherical mask support                | off         |
-| `--tomogram-ctf-model`         | CTF model used (e.g. `phase-flip`)               | none        |
-| `-r, --random-phase-correction`| STOPGAP-style random-phase correction            | off         |
-| `--half-precision`             | Use float16 output                               | off         |
-| `--rng-seed`                   | RNG seed for phase correction                    | `69`        |
-| `--per-tilt-weighting`         | Enable per-tilt CTF weighting                    | off         |
-| `--low-pass LOW_PASS`          | Low-pass filter cutoff in Å                      | none        |
-| `--high-pass HIGH_PASS`        | High-pass filter cutoff in Å                     | none        |
-| `--phase-shift PHASE_SHIFT`    | Phase shift in degrees                           | `0.0`       |
-| `--defocus-handedness`         | Defocus gradient handedness (`-1,0,1`)           | none        |
-| `--spectral-whitening`         | Enable spectral whitening                        | off         |
-| `--relion5-tomograms-star`     | Path to RELION5 `tomograms.star` override        | none        |
-
-### Written by default!
-| Flag                          | Description                                      | Default     |
-|-------------------------------|--------------------------------------------------|-------------|
-| `--amplitude-contrast`        | Amplitude contrast fraction                      | `0.07`      |
-| `--spherical-aberration`      | Spherical aberration (mm)                        | `2.7`       |
-| `--voltage`                   | Voltage (kV)                                     | `300`       |
-
-### SLURM Settings
-| Flag                          | Description                                      | Default     |
-|-------------------------------|--------------------------------------------------|-------------|
-| `--partition`                 | SLURM partition                                  | `emgpu`     |
-| `--ntasks`                    | SLURM ntasks                                     | `1`         |
-| `--nodes`                     | SLURM nodes                                      | `1`         |
-| `--ntasks-per-node`           | SLURM tasks per node                             | `1`         |
-| `--cpus-per-task`             | SLURM CPUs per task                              | `4`         |
-| `--gres`                      | SLURM GPU resource (e.g. `gpu:1`)                | `gpu:1`     |
-| `--mem`                       | SLURM memory (GB)                                | `128`       |
-| `--qos`                       | SLURM Quality of Service                         | `emgpu`     |
-| `--time`                      | SLURM time limit                                 | `05:00:00`  |
-| `--mail-type`                 | SLURM mail notifications                         | `none`      |
-
----
-
-## Example Output
-After running, you’ll get one folder per tomogram under `submission/`:
-
-```
-submission/
-├─ Position_1/
-│  ├─ Position_1.tlt
-│  ├─ Position_1_defocus.txt
-│  ├─ Position_1_exposure.txt
-│  └─ submit_Position_1.sh
-├─ Position_2/
-└─ Position_3/
-```
-
-Sample `submit_Position_1.sh`:
+### Example: one SLURM array (default)
 
 ```bash
-#!/bin/bash -l
-#SBATCH -o pytom.out%j
-#SBATCH -D ./
-#SBATCH -J pytom_1
-#SBATCH --partition=emgpu
-#SBATCH --ntasks=1
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:1
-#SBATCH --mail-type=none
-#SBATCH --mem=128G
-#SBATCH --qos=emgpu
-#SBATCH --time=05:00:00
-
-ml purge
-ml pytom-match-pick
-
-pytom_match_template.py \
-  -v ../Position_1_Vol.mrc \
-  -a submission/Position_1/Position_1.tlt \
-  --dose-accumulation submission/Position_1/Position_1_exposure.txt \
-  --defocus submission/Position_1/Position_1_defocus.txt \
+python batch_pytom_aretomo3.py \
+  --workflow match \
+  --mode array \
+  -i /path/to/aretomo3/output \
+  -d submission \
   -t /path/to/template.mrc \
-  -d submission/Position_1 \
   -m /path/to/mask.mrc \
-  --angular-search 10 \
-  -s 2 2 1 \
-  --voxel-size-angstrom 7.64 \
-  -r \
-  --rng-seed 69 \
   -g 0 \
-  --amplitude-contrast 0.07 \
-  --spherical-aberration 2.7 \
-  --voltage 300 \
-  --per-tilt-weighting \
-  --tomogram-ctf-model phase-flip \
-  --non-spherical-mask
+  --voxel-size-angstrom 7.64 \
+  --dose 2 \
+  --particle-diameter 140 \
+  --array-max-parallel 8 \
+  --dry-run
 ```
 
-## Full Help Output
-Run `./batch_pytom_aretomo3.py -h` to see all flags and defaults. Feel free to open an issue or submit a PR for further customization!
+Remove `--dry-run` to submit. For **one separate SLURM job per tomogram**, use `--mode per-tomo` instead. `--mode` controls *template-matching submission*, not the choice of workflow.
 
+You can use `--angular-search 10` instead of `--particle-diameter 140` for matching, but not both. Optional parameters include `-s 2 2 1`, `--per-tilt-weighting`, `--non-spherical-mask`, `--tomogram-ctf-model phase-flip`, `-r`, and `--rng-seed 69`.
+
+### Template-matching output
+
+With default `--mode array`:
+
+```text
+submission/
+├── prefixes.txt
+├── submit_array.sh
+├── Position_1/
+│   ├── Position_1.tlt
+│   ├── Position_1_defocus.txt       # only if defocus metadata available
+│   └── Position_1_exposure.txt
+├── Position_2/
+└── Position_3/
+```
+
+With `--mode per-tomo`, each tomogram subfolder also contains `submit_<prefix>.sh`. After a successful `pytom_match_template.py` run, the matching output includes a `*_job.json` file that extraction can use.
+
+## 2. Particle candidate extraction
+
+After template matching finishes, run the same wrapper in extraction mode. The wrapper recursively discovers `*_job.json` files under `--output-dir`, sorts their paths, and assigns **one JSON per SLURM array task**. No AreTomo3 directory, template, mask, dose, voxel size, or `-g` argument is required for this mode.
+
+### Example: defaults
+
+```bash
+python batch_pytom_aretomo3.py \
+  --workflow extract \
+  -d submission \
+  --dry-run
+```
+
+This produces a task equivalent to:
+
+```bash
+pytom_extract_candidates.py \
+  -j submission/Position_1/Position_1_job.json \
+  --particle-diameter 300 \
+  -n 1000 \
+  -c 0.1 \
+  --relion5-compat
+```
+
+The JSON filename shown is illustrative; the wrapper uses the actual discovered filename and absolute path.
+
+### Example: customize extraction
+
+```bash
+python batch_pytom_aretomo3.py \
+  --workflow extract \
+  -d submission \
+  --particle-diameter 300 \
+  -n 1000 \
+  -c 0.1 \
+  --relion5-compat \
+  --array-max-parallel 8 \
+  --extract-extra-args '--some-option value --another-flag' \
+  --dry-run
+```
+
+Replace the placeholder options in `--extract-extra-args` with flags accepted by your installed version of `pytom_extract_candidates.py`. Shell-style quoting is supported. Do not repeat wrapper-managed options such as `-j`, `--particle-diameter`, `-n`, `-c`, or `--relion5-compat` in the extra-args string. Use `--no-relion5-compat` to turn off RELION5 compatibility.
+
+**GPU enforcement:** extraction always generates `#SBATCH --gres=gpu:1`, even if `--gres` is set to another value. Extraction always uses a SLURM array; `--mode per-tomo` does not change it. `--array-max-parallel` limits simultaneous array tasks (default: 8).
+
+### Extraction output
+
+The wrapper generates these files in `submission/`:
+
+```text
+submission/
+├── extract_jobs.txt              # sorted absolute paths to matching JSON files
+├── submit_extract_array.sh       # SLURM array script
+├── Position_1/
+│   └── ..._job.json              # pre-existing matching result
+└── Position_2/
+    └── ..._job.json
+```
+
+When submitted, task logs are named `pytom_extract_<jobid>_<taskid>.out`. Candidate outputs are written by PyTOM according to its own extraction behavior.
+
+`--include` and `--exclude` also work in extraction mode: patterns match either the JSON's parent folder name or its filename without `_job.json`.
+
+## 3. Flag summary
+
+### Workflow and common options
+
+| Flag | Description | Default |
+|---|---|---|
+| `--workflow {match,extract}` | Select template matching or candidate extraction | `match` |
+| `-d, --output-dir` | Matching output root; extraction scans it for `*_job.json` | `submission` |
+| `--include` / `--exclude` | Filter tomogram prefixes or extraction job JSONs using wildcards | all / none |
+| `--dry-run` | Generate scripts but do not submit | off |
+| `--array-max-parallel`, `--max-parallel` | Maximum simultaneous array tasks | `8` |
+
+### Template matching: required inputs
+
+| Flag | Description | Default |
+|---|---|---|
+| `-i, --aretomo-dir` | Directory of AreTomo3 outputs | required for `match` |
+| `-t, --template` | Template MRC | required for `match` |
+| `-m, --mask` | Template mask MRC | required for `match` |
+| `-g, --gpu-ids` | GPU IDs passed to `pytom_match_template.py` | required for `match` |
+| `--voxel-size-angstrom` | Voxel size (Å) | required for `match` |
+| `--dose` | Dose per tilt (e⁻/Å²) | required for `match` |
+| `--particle-diameter` **or** `--angular-search` | Crowther sampling diameter (Å), or angular search override | one required for `match` |
+
+### Template matching: other options
+
+| Flag | Description | Default |
+|---|---|---|
+| `--mode {array,per-tomo}` | One matching array or individual matching jobs | `array` |
+| `--bmask-dir` | Boundary masks named `<prefix>.mrc` | none |
+| `-s, --volume-split X Y Z` | Split matching search volume | none |
+| `--search-x START END`, `--search-y START END`, `--search-z START END` | Limit search ranges | none |
+| `--non-spherical-mask` | Use non-spherical template mask | off |
+| `--z-axis-rotational-symmetry` | Z-axis symmetry order | none |
+| `--tomogram-ctf-model` | Reconstruction CTF model (`phase-flip`) | none |
+| `-r, --random-phase-correction` | Random phase correction | off |
+| `--rng-seed` | Random seed (passed with `-r`) | `69` |
+| `--half-precision` | Float16 output | off |
+| `--per-tilt-weighting` | Per-tilt weighting | off |
+| `--low-pass`, `--high-pass` | Filtering cutoffs in Å | none |
+| `--phase-shift` | Phase shift in degrees | none |
+| `--defocus-handedness` | Defocus gradient handedness: `-1`, `0`, or `1` | none |
+| `--spectral-whitening` | Spectral whitening | off |
+| `--relion5-tomograms-star` | RELION5 tomograms STAR path | none |
+| `--amplitude-contrast` | Amplitude contrast | `0.07` |
+| `--spherical-aberration` | Spherical aberration (mm) | `2.7` |
+| `--voltage` | Accelerating voltage (kV) | `300` |
+| `--log` | PyTOM logging level (`info` or `debug`) | none |
+
+### Candidate extraction options
+
+| Flag | Description | Default |
+|---|---|---|
+| `--particle-diameter` | Particle diameter (Å) for extraction | `300` in `extract` |
+| `-n, --n-candidates` | Maximum candidates per JSON | `1000` |
+| `-c, --cutoff` | Candidate score cutoff | `0.1` |
+| `--relion5-compat` | RELION5-compatible extraction | enabled |
+| `--no-relion5-compat` | Disable RELION5 compatibility | — |
+| `--extract-extra-args` | Additional extraction CLI arguments as a quoted string | empty |
+
+### SLURM settings
+
+| Flag | Description | Default |
+|---|---|---|
+| `--partition` | Partition | `emgpu` |
+| `--qos` | Quality of Service | `emgpu` |
+| `--ntasks` | Number of tasks | `1` |
+| `--nodes` | Number of nodes | `1` |
+| `--ntasks-per-node` | Tasks per node | `1` |
+| `--cpus-per-task` | CPUs per task | `4` |
+| `--gres` | GPU request (extraction overrides with `gpu:1`) | `gpu:1` |
+| `--mem` | Memory in GB | `128` |
+| `--time` | Time limit | `05:00:00` |
+| `--mail-type` | Mail notifications | `none` |
+| `--exclude-nodes` | Nodes to exclude | none |
+| `--include-nodes` | Nodes to request | none |
+
+## Full help
+
+```bash
+python batch_pytom_aretomo3.py -h
+```
+
+The wrapper generates scripts and submits jobs to SLURM; it does not wait for template matching to finish before extraction. Run the extraction workflow **after matching has completed**.
