@@ -25,13 +25,11 @@ def parse_args():
                    help='Run template matching (default) or submit candidate extraction as a SLURM array')
     p.add_argument('-n', '--n-candidates', type=int, default=1000,
                    help='Maximum candidates per tomogram in extract workflow (default: 1000)')
-    p.add_argument('-c', '--cutoff', type=float, default=0.1,
-                   help='Score cutoff for candidate extraction (default: 0.1)')
     p.add_argument('--relion5-compat', dest='relion5_compat', action='store_true', default=True,
                    help='Use RELION5 compatible extraction output (default: enabled)')
     p.add_argument('--no-relion5-compat', dest='relion5_compat', action='store_false',
                    help='Disable RELION5 compatible output in extraction')
-    p.add_argument('--extract-extra-args', default='', metavar='"OPTIONS"',
+    p.add_argument('--extract-args', default='', metavar='"OPTIONS"',
                    help='Additional arguments for pytom_extract_candidates.py (shell-style quoted string)')
 
     # Submission mode
@@ -603,10 +601,10 @@ def make_extract_array_sbatch(args):
         diameter = args.particle_diameter
     if diameter <= 0 or args.n_candidates <= 0 or args.array_max_parallel is not None and args.array_max_parallel <= 0:
         raise ValueError('Particle diameter, candidate count, and concurrency must be positive')
-    extras = shlex.split(args.extract_extra_args)
-    blocked = {'-j', '--job', '--particle-diameter', '-n', '-c', '--relion5-compat'}
+    extras = shlex.split(args.extract_args)
+    blocked = {'-j', '--job', '--particle-diameter', '-n', '--n-candidates', '--relion5-compat'}
     if any(x in blocked or x.startswith('--particle-diameter=') for x in extras):
-        raise ValueError('Do not override managed extraction flags in --extract-extra-args')
+        raise ValueError('Do not override managed extraction flags in --extract-args')
     manifest = os.path.join(root, 'extract_jobs.txt')
     with open(manifest, 'w') as f:
         f.write('\n'.join(jobs) + '\n')
@@ -641,7 +639,6 @@ def make_extract_array_sbatch(args):
         'CMD=(pytom_extract_candidates.py -j "$JOB")',
         f'CMD+=(--particle-diameter {diameter:g})',
         f'CMD+=(-n {args.n_candidates})',
-        f'CMD+=(-c {args.cutoff})',
     ])
     if args.relion5_compat:
         lines.append('CMD+=(--relion5-compat)')
