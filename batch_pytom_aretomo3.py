@@ -19,7 +19,6 @@ def parse_args():
                    help='Top-level folder for per-tomogram subfolders')
     p.add_argument('--bmask-dir',
                    help='Directory containing binary mask files (format has to be: <prefix>.mrc !!)')
-    p.add_argument("--bmasks-dir", help="Optional extraction-time mask directory (<tomogram-prefix>.mrc); overrides matching mask")
 
     # Workflow: extraction uses the *_job.json files created by template matching.
     p.add_argument('--workflow', choices=['match', 'extract'], default='match',
@@ -597,8 +596,8 @@ def make_extract_array_sbatch(args):
     if not jobs:
         raise RuntimeError(f"No *_job.json files found under {root} after filtering")
     extraction_masks = []
-    if args.bmasks_dir:
-        masks_dir = __import__('pathlib').Path(args.bmasks_dir).resolve()
+    if args.bmask_dir:
+        masks_dir = __import__('pathlib').Path(args.bmask_dir).resolve()
         if not masks_dir.is_dir():
             raise NotADirectoryError(f'Extraction mask directory not found: {masks_dir}')
         for job in jobs:
@@ -625,7 +624,7 @@ def make_extract_array_sbatch(args):
     manifest = os.path.join(root, 'extract_jobs.txt')
     with open(manifest, 'w') as f:
         f.write('\n'.join(jobs) + '\n')
-    if args.bmasks_dir:
+    if args.bmask_dir:
         with open(os.path.join(root, 'extract_masks.txt'), 'w') as f:
             f.write('\n'.join(map(str, extraction_masks)) + '\n')
     limit = f'%{args.array_max_parallel}' if args.array_max_parallel is not None else ''
@@ -654,17 +653,17 @@ def make_extract_array_sbatch(args):
     lines.extend([
         '', 'ml purge', 'ml pytom-match-pick', '',
         f'MANIFEST={shlex.quote(manifest)}',
-        *( [f"MASK_MANIFEST={shlex.quote(os.path.join(root, 'extract_masks.txt'))}"] if args.bmasks_dir else [] ),
+        *( [f"MASK_MANIFEST={shlex.quote(os.path.join(root, 'extract_masks.txt'))}"] if args.bmask_dir else [] ),
         'JOB=$(sed -n "$((SLURM_ARRAY_TASK_ID+1))p" "$MANIFEST")',
         '[[ -n "$JOB" && -s "$JOB" ]] || { echo "Missing job JSON: $JOB" >&2; exit 2; }',
         'CMD=(pytom_extract_candidates.py -j "$JOB")',
         *( ['MASK=$(sed -n "$((SLURM_ARRAY_TASK_ID+1))p" "$MASK_MANIFEST")',
             '[[ -n "$MASK" && -f "$MASK" ]] || { echo "Missing extraction mask: $MASK" >&2; exit 2; }']
-           if args.bmasks_dir else [] ),
+           if args.bmask_dir else [] ),
         f'CMD+=(--particle-diameter {diameter:g})',
         f'CMD+=(-n {args.n_candidates})',
     ])
-    if args.bmasks_dir:
+    if args.bmask_dir:
         lines.append('CMD+=(--tomogram-mask "$MASK")')
     if args.relion5_compat:
         lines.append('CMD+=(--relion5-compat)')
