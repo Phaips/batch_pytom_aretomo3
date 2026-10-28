@@ -64,7 +64,7 @@ With `--mode per-tomo`, each tomogram subfolder also contains `submit_<prefix>.s
 
 ## 2. Particle candidate extraction
 
-After template matching finishes, run the same wrapper in extraction mode. The wrapper recursively discovers `*_job.json` files under `--output-dir`, sorts their paths, and assigns **one JSON per SLURM array task**. No AreTomo3 directory, template, mask, dose, voxel size, or `-g` argument is required for this mode.
+After template matching finishes, run the same wrapper in extraction mode. The wrapper recursively discovers `*_job.json` files under `--output-dir`, sorts their paths, and assigns **one JSON per SLURM array task**. No AreTomo3 directory, template, mask, dose, voxel size, or `-g` argument is required for this mode. Optionally, `--bmask-dir` can be supplied here, overriding any previous tomogram masks used during template matching.
 
 ### Example: defaults
 
@@ -73,17 +73,6 @@ python batch_pytom_aretomo3.py \
   --workflow extract \
   -d submission \
   --dry-run
-```
-
-This produces a task equivalent to:
-
-```bash
-pytom_extract_candidates.py \
-  -j submission/Position_1/Position_1_job.json \
-  --particle-diameter 300 \
-  -n 1000 \
-  -c 0.1 \
-  --relion5-compat
 ```
 
 The JSON filename shown is illustrative; the wrapper uses the actual discovered filename and absolute path.
